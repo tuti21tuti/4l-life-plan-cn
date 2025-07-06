@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>4L生活规划诊断工具（响应式设计）</title>
+  <style>
+    body { 
+      font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Heiti SC", sans-serif;
+      margin: 20px; 
+      position: relative; 
+    }
+    .instructions { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; }
+    .instructions > div:first-child { flex: 1; min-width: 0; }
+    .instructions h2 { margin-bottom: 0.5em; }
+    .instructions p { font-size: 0.95em; line-height: 1.6; margin-right: 0; }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .chart-container { display: flex; flex-direction: column; border: 1px solid #ccc; padding: 10px; border-radius: 8px; }
+    .top-section { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+    .inputs { display: flex; flex-direction: column; gap: 12px; min-width: 200px; flex: 1; }
+    .input-row { display: flex; flex-direction: column; align-items: flex-start; }
+    .input-row label { font-weight: bold; margin-bottom: 4px; }
+    .input-row input[type=range] { width: 100%; }
+    canvas { width: 200px !important; height: 200px !important; }
+    .graph-block { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; }
+    .graph-labels { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; font-size: 0.8em; }
+    .graph-labels span { padding: 2px 6px; border-radius: 4px; color: #fff; width: fit-content; }
+    .label-labor { background-color: #66B2FF; }
+    .label-love { background-color: #FF9999; }
+    .label-learning { background-color: #99FF99; color: #000; }
+    .label-leisure { background-color: #FFD700; color: #000; }
+    .label { display: inline-block; padding: 2px 8px; border-radius: 6px; color: white; font-weight: bold; font-size: 0.9em; margin-right: 5px; }
+    .user-notes { margin-top: 30px; display: flex; flex-direction: column; gap: 8px; }
+    .user-notes label { font-weight: bold; }
+    .user-notes textarea { width: 100%; height: 60px; }
+
+    @media (max-width: 768px) {
+      .charts { grid-template-columns: 1fr; }
+      .top-section { flex-direction: column; align-items: center; }
+      .inputs { width: 100%; }
+      .instructions { flex-direction: column; align-items: flex-start; }
+      .instructions > div:first-child { width: 100%; margin-right: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="instructions">
+    <div style="max-width: 75%;">
+      <h2>📝 4L人生平衡表</h2>
+      <p>
+        使用滑块设置"工作·爱·学习·休闲"4个领域的平衡。<br>
+        其他项目会自动调整，使总和为100%。<br>
+        输入出生日期后，年龄也会自动显示。<br><br>
+        每个年份下方，您可以自由填写自己理想的生活方式、工作方式和目标等。
+      </p>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; font-size: 1em;">
+      <label for="dob">出生日期:</label>
+      <input type="date" id="dob" name="dob" onchange="updateAges()" style="padding: 6px 10px; font-size: 1em; border: 1px solid #ccc; border-radius: 4px;">
+    </div>
+  </div>
+
+  <div class="charts" id="chartArea"></div>
+
+  <button onclick="downloadPDF()" style="position:fixed;bottom:80px;right:20px;padding:10px 15px;font-weight:bold;font-size:14px;border:none;background-color:#4CAF50;color:white;border-radius:6px;cursor:pointer;z-index:999;">📄 下载PDF</button>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
+    const years = ['1', '3', '5', '10'];
+    const labels = ['Labor', 'Love', 'Learning', 'Leisure'];
+    const jpLabels = { 'Labor': '工作', 'Love': '爱', 'Learning': '学习', 'Leisure': '休闲' };
+    const colors = ['#66B2FF', '#FF9999', '#99FF99', '#FFD700'];
+    const charts = {};
+    const defaults = {
+      '1': [40, 25, 25, 10],
+      '3': [35, 25, 25, 15],
+      '5': [40, 20, 20, 20],
+      '10': [35, 25, 20, 20]
+    };
+
+    function calculateAge(birthDateStr, plusYears) {
+      const today = new Date();
+      const birthDate = new Date(birthDateStr);
+      const future = new Date(today.getFullYear() + plusYears, today.getMonth(), today.getDate());
+      let age = future.getFullYear() - birthDate.getFullYear();
+      const m = future.getMonth() - birthDate.getMonth();
+      if (m < 0 || (m === 0 && future.getDate() < birthDate.getDate())) age--;
+      return age;
+    }
+
+    function updateAges() {
+      const dob = document.getElementById('dob').value;
+      if (!dob) return;
+      years.forEach(y => {
+        const ageSpan = document.getElementById('age-' + y);
+        if (ageSpan) ageSpan.textContent = `［${calculateAge(dob, parseInt(y))}岁］`;
+      });
+    }
+
+    function handleChange(year, changedKey) {
+      const keys = labels.map(l => l.toLowerCase());
+      const values = keys.map(k => Number(document.getElementById(k + year).value));
+      const changedIndex = keys.indexOf(changedKey);
+      const changedValue = values[changedIndex];
+      let remaining = 100 - changedValue;
+      const otherIndices = keys.map((_, i) => i).filter(i => i !== changedIndex);
+      const othersTotal = otherIndices.reduce((sum, i) => sum + values[i], 0);
+      otherIndices.forEach(i => {
+        let newValue = othersTotal > 0 ? (values[i] / othersTotal) * remaining : remaining / otherIndices.length;
+        newValue = Math.round(newValue / 5) * 5;
+        values[i] = newValue;
+        document.getElementById(keys[i] + year).value = newValue;
+      });
+      document.getElementById(keys[changedIndex] + year).value = changedValue;
+      drawChart(year);
+    }
+
+    function drawChart(year) {
+      const data = labels.map(label => Number(document.getElementById(label.toLowerCase() + year).value));
+      const ctx = document.getElementById('chart' + year).getContext('2d');
+      if (charts[year]) charts[year].destroy();
+      charts[year] = new Chart(ctx, {
+        type: 'pie',
+        data: { labels: labels, datasets: [{ data: data, backgroundColor: colors }] },
+        options: {
+          plugins: {
+            legend: { display: false },
+            datalabels: {
+              formatter: (value) => `${value}%`,
+              color: '#000',
+              font: { size: 14, weight: 'bold' }
+            }
+          }
+        },
+        plugins: [ChartDataLabels]
+      });
+    }
+
+    function createBlock(year) {
+      const container = document.createElement('div');
+      container.className = 'chart-container';
+      container.innerHTML = `
+        <h3>${year}年后 <span id="age-${year}"></span></h3>
+        <div class="top-section">
+          <div class="inputs">
+            ${labels.map((label, i) => `
+              <div class="input-row">
+                <label for="${label.toLowerCase()}${year}"><span class="label label-${label.toLowerCase()}">${label}</span> [${jpLabels[label]}] <span id="percent-${label.toLowerCase()}-${year}" style="margin-left:10px;font-size:1.2em;color:#000;font-weight:bold;"></span></label>
+                <input type="range" id="${label.toLowerCase()}${year}" value="${defaults[year][i]}" min="0" max="100" step="5"
+                  oninput="handleChange('${year}', '${label.toLowerCase()}'); document.getElementById('percent-${label.toLowerCase()}-${year}').textContent = this.value + '%';">
+              </div>
+            `).join('')}
+          </div>
+          <div class="graph-block">
+            <canvas id="chart${year}"></canvas>
+            <div class="graph-labels">
+              ${labels.map(label => `<span class="label-${label.toLowerCase()}">${label}</span>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="user-notes">
+          ${labels.map(label => `
+            <label for="notes-${label.toLowerCase()}-${year}"><span class="label label-${label.toLowerCase()}">${label}</span> [${jpLabels[label]}] 的理想：</label>
+            <textarea id="notes-${label.toLowerCase()}-${year}" placeholder="请写下关于${label}的理想或目标"></textarea>
+          `).join('')}
+        </div>
+      `;
+      document.getElementById('chartArea').appendChild(container);
+    }
+
+    window.onload = () => {
+      years.forEach(year => {
+        createBlock(year);
+        drawChart(year);
+      });
+      updateAges();
+    };
+
+    async function downloadPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF('p', 'pt', 'a4');
+      const button = document.querySelector('button[onclick="downloadPDF()"]');
+      button.style.display = 'none';
+      const canvas = await html2canvas(document.body, { scale: 2 });
+      const imgData = canvas.toDataURL('image/png');
+      const imgProps = doc.getImageProperties(imgData);
+      const pdfWidth = doc.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      doc.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      button.style.display = 'block';
+      doc.save('4L_Life_Plan.pdf');
+    }
+  </script>
+</body>
+</html>
